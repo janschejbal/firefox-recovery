@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Firefox session store parser</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding-bottom: 30px; /* Keep content from being covered by the "status bar" (link target indicator) overlay. */
+    }
+
+    .window {
+      margin: 10px;
+      border: 1px #aa0 solid;
+      background-color: #ffa;
+      padding: 10px;
+    }
+
+    .window.closed {
+      background-color: #ddb;
+      border-color: #996;
+    }
+
+    .historyindicator {
+      cursor: pointer;
+    }
+
+    .historyindicator .back, .historyindicator .forward {
+      min-width: 40px;
+      display: inline-block;
+    }
+    .historyindicator .back {
+      text-align: right;
+    }
+    .historyindicator .forward {
+      text-align: left;
+    }
+
+    .nohistory {
+      opacity: .5;
+    }
+
+    .history .currententry {
+      font-weight: bold;
+    }
+
+    .expando>* {
+      cursor: auto;
+    }
+    .expando { /* Specified after "children of expandos have default cursors" to give an expando-within-expando the pointer. */
+      cursor: pointer;
+    }
+
+    .tab {
+      margin: 3px;
+      border: 1px #080 solid;
+      background-color: #dfd;
+      padding: 3px;
+    }
+
+    .sessionrestore {
+      margin: 3px;
+      border: 1px #003 solid;
+      background-color: #ddf;
+      padding: 3px;
+    }
+
+    .closedtabs {
+      margin: 3px;
+      padding: 3px;
+      margin: 3px;
+      border: 1px #887 solid;
+      background-color: #eef3ee;
+      padding: 10px;
+    }
+
+    .favicon {
+       width: 16px;
+       height: 16px;
+       margin-bottom: -2px;
+    }
+
+    @keyframes pulsate {
+      0%   { color: #333; }
+      100%   { color: #aaa; }
+    }
+
+    .loading {
+      padding: 20px;
+      font-size: 30px;
+      animation-name: pulsate;
+      animation-duration: 1s;
+      animation-iteration-count: infinite;
+      animation-direction: alternate;
+    }
+
+    #rawsection textarea {
+      box-sizing: border-box;
+      width: 100%;
+      height: 400px;
+    }
+
+    footer {
+      border-top: 1px solid #999;
+      color: #666;
+      padding: 5px;
+    }
+    footer small {
+      color: #999;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js" defer></script>
+  <script src="lz4.js" defer></script>
+  <script src="parse.js" defer></script>
+</head>
+<body onload="init()">
+  <h1>Firefox session file parser</h1>
+  <p>This app will parse the session state file from the sessionstore-backups folder (e.g. recovery.jsonlz4, recovery.baklz4, upgrade.jsonlz4-*, previous.jsonlz4).
+  This helps recover your state if e.g. recovery fails, or you want to get tabs back from a session store file you recovered from a backup.</p>
+  <p>Not all data contained in the session state file is displayed (e.g. session cookies). All processing happens client-side. Your session data is <strong>not</strong> sent to the server.</p>
+  <p>You can find the sessionstore-backups folder in your Firefox profile, which is a folder under:
+    <ul>
+      <li><tt>%APPDATA%\Mozilla\Firefox\Profiles\</tt> on Windows</li>
+      <li><tt>~/Library/Application Support/Mozilla/Firefox/Profiles</tt> on Mac</li>
+      <li><tt>~/.mozilla/firefox</tt> on Linux</li>
+    </ul>
+  </p>
+
+  <div>
+    <!-- Drag and Drop APIs are horribly designed and broken (e.g. touching the element text seems to trigger onDragLeave on Firefox). Don't even try.
+         Also, a file selector keeps the selection across reloads, which is really nice for debugging. -->
+    Select a history file to parse:
+    <input type="file" id="file-selector" onchange="loadFile()"> 
+    <button onclick="loadFile()">Reload</button><br>
+  </div>
+  <div id="renderarea">
+    <input type="checkbox" id="checkboxFavicons" v-model="favicons"><label for="checkboxFavicons">Display favicons (loaded live from original URLs)</label>
+    <div v-if="!ready" class="loading">Loading/initializing (needs a modern browser and WebASM)...</div>
+    <session v-bind:d="d" v-bind:favicons="favicons"></session>
+    <div id="rawsection">
+      <h2 class="expando" v-on:click.self.prevent="showraw = !showraw">{{ showraw ? '[−]' : '[+]'}} Raw data</h2>
+      <template v-if="showraw">
+        <textarea v-model="raw" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea><br>
+        <button onclick="jsonParse()">Parse from text</button>
+        <button onclick="jsonGuess()">Guess missing end</button>
+        <button onclick="jsonPretty()">Pretty</button>
+      </template>
+    </div>
+  </div>
+  <footer>
+    A tool by Jan Schejbal.<br>
+    <small>Uses an LZ4 library by Yann Collet (see source for details/license).</small>
+  </footer>
+</body>
+</html>
+<!--
+This software uses an LZ4 library from https://github.com/lz4/lz4 with the following license:
+
+/===============================================================================
+| LZ4 Library
+| Copyright (c) 2011-2016, Yann Collet
+| All rights reserved.
+| 
+| Redistribution and use in source and binary forms, with or without modification,
+| are permitted provided that the following conditions are met:
+| 
+| * Redistributions of source code must retain the above copyright notice, this
+|   list of conditions and the following disclaimer.
+| 
+| * Redistributions in binary form must reproduce the above copyright notice, this
+|   list of conditions and the following disclaimer in the documentation and/or
+|   other materials provided with the distribution.
+| 
+| THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+| ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+| WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+| DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+| ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+| (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+| LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+| ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+| (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+| SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+\===============================================================================
+-->
